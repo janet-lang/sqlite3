@@ -106,11 +106,8 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
         case JANET_TRUE:
             res = sqlite3_bind_int(stmt, index, 1);
             break;
-        case JANET_REAL:
-            res = sqlite3_bind_double(stmt, index, janet_unwrap_real(value));
-            break;
-        case JANET_INTEGER:
-            res = sqlite3_bind_int64(stmt, index, janet_unwrap_integer(value));
+        case JANET_NUMBER:
+            res = sqlite3_bind_double(stmt, index, janet_unwrap_number(value));
             break;
         case JANET_STRING:
         case JANET_SYMBOL:
@@ -165,7 +162,8 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
                 case JANET_NIL:
                     /* Will skip as nil keys indicate empty hash table slot */
                     continue;
-                case JANET_INTEGER:
+                case JANET_NUMBER:
+                    if (!janet_checkint(kvs[i].key)) break;
                     index = janet_unwrap_integer(kvs[i].key);
                     break;
                 case JANET_STRING:
@@ -236,7 +234,7 @@ static const char *execute_collect(sqlite3_stmt *stmt, JanetArray *rows) {
                         value = janet_wrap_integer(sqlite3_column_int(stmt, i));
                         break;
                     case SQLITE_FLOAT:
-                        value = janet_wrap_real(sqlite3_column_double(stmt, i));
+                        value = janet_wrap_number(sqlite3_column_double(stmt, i));
                         break;
                     case SQLITE_TEXT:
                         {
@@ -333,26 +331,6 @@ error:
     JANET_THROW(args, err);
 }
 
-/* Convert int64_t to a string */
-static const uint8_t *coerce_int64(int64_t x) {
-    uint8_t bytes[40];
-    int i = 0;
-    /* Edge cases */
-    if (x == 0) return janet_cstring("0");
-    if (x == INT64_MIN) return janet_cstring("-9,223,372,036,854,775,808");
-    /* Negative becomes pos */
-    if (x < 0) {
-        bytes[i++] = '-';
-        x = -x;
-    }
-    while (x) {
-        bytes[i++] = x % 10;
-        x = x / 10;
-    }
-    bytes[i] = '\0';
-    return janet_string(bytes, i);
-}
-
 /* Gets the last inserted row id */
 static int sql_last_insert_rowid(JanetArgs args) {
     JANET_FIXARITY(args, 1);
@@ -362,11 +340,7 @@ static int sql_last_insert_rowid(JanetArgs args) {
         JANET_THROW(args, MSG_DB_CLOSED);
     }
     sqlite3_int64 id = sqlite3_last_insert_rowid(db->handle);
-    if (id >= INT32_MIN && id <= INT32_MAX) {
-        JANET_RETURN_INTEGER(args, (int32_t) id);
-    }
-    /* Convert to string */
-    JANET_RETURN_STRING(args, coerce_int64(id));
+    JANET_RETURN_NUMBER(args, (double) id);
 }
 
 /* Get the sqlite3 errcode */
@@ -409,9 +383,7 @@ static const JanetReg cfuns[] = {
     },
     {"last-insert-rowid", sql_last_insert_rowid, 
         "(sqlite3/last-insert-rowid db)\n\n"
-        "Returns the id of the last inserted row. If the id will fit into a 32-bit"
-        "signed integer, will returned an integer, otherwise will return a string representation "
-        "of the id (an 8 bytes string containing a long integer)."
+        "Returns the id of the last inserted row."
     },
     {"error-code", sql_error_code,
         "(sqlite3/error-code db)\n\n"
