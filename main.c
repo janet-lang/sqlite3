@@ -49,7 +49,7 @@ static int gcsqlite(void *p, size_t s) {
 }
 
 static const JanetAbstractType sql_conn_type = {
-    ":sqlite3.connection",
+    "sqlite3.connection",
     gcsqlite,
     NULL,
 };
@@ -111,13 +111,14 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
             break;
         case JANET_STRING:
         case JANET_SYMBOL:
+        case JANET_KEYWORD:
             {
                 const uint8_t *str = janet_unwrap_string(value);
                 int32_t len = janet_string_length(str);
                 if (has_null(str, len)) {
                     return "cannot have embedded nulls in text values";
                 } else {
-                    res = sqlite3_bind_text(stmt, index, (const char *)str, len + 1, SQLITE_STATIC);
+                    res = sqlite3_bind_text(stmt, index, (const char *)str, len, SQLITE_STATIC);
                 }
             }
             break;
@@ -165,6 +166,16 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
                 case JANET_NUMBER:
                     if (!janet_checkint(kvs[i].key)) break;
                     index = janet_unwrap_integer(kvs[i].key);
+                    break;
+                case JANET_KEYWORD:
+                    {
+                        char *kw = (char *)janet_unwrap_keyword(kvs[i].key);
+                        /* Quick hack for keywords */
+                        char old = kw[-1];
+                        kw[-1] = ':';
+                        index = sqlite3_bind_parameter_index(stmt, kw - 1);
+                        kw[-1] = old;
+                    }
                     break;
                 case JANET_STRING:
                 case JANET_SYMBOL:
