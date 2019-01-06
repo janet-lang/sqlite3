@@ -55,31 +55,24 @@ static const JanetAbstractType sql_conn_type = {
 };
 
 /* Open a new database connection */
-static int sql_open(JanetArgs args) {
+static Janet sql_open(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    const uint8_t *filename = janet_getstring(argv, 0);
     sqlite3 *conn;
-    const uint8_t *filename;
-    int status;
-    JANET_FIXARITY(args, 1);
-    JANET_ARG_STRING(filename, args, 0);
-    status = sqlite3_open((const char *)filename, &conn);
-    if (status == SQLITE_OK) {
-        Db *db = (Db *) janet_abstract(&sql_conn_type, sizeof(Db));
-        db->handle = conn;
-        db->flags = 0;
-        JANET_RETURN_ABSTRACT(args, db);
-    } else {
-        const char *err = sqlite3_errmsg(conn);
-        JANET_THROW(args, err);
-    }
+    int status = sqlite3_open((const char *)filename, &conn);
+    if (status != SQLITE_OK) janet_panic(sqlite3_errmsg(conn));
+    Db *db = (Db *) janet_abstract(&sql_conn_type, sizeof(Db));
+    db->handle = conn;
+    db->flags = 0;
+    return janet_wrap_abstract(db);
 }
 
 /* Close a database connection */
-static int sql_close(JanetArgs args) {
-    Db *db;
-    JANET_FIXARITY(args, 1);
-    JANET_ARG_ABSTRACT(db, args, 0, &sql_conn_type);
+static Janet sql_close(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
     closedb(db);
-    JANET_RETURN_NIL(args);
+    return janet_wrap_nil();
 }
 
 /* Check for embedded NULL bytes */
@@ -280,19 +273,13 @@ static const char *execute_collect(sqlite3_stmt *stmt, JanetArray *rows) {
 }
 
 /* Evaluate a string of sql */
-static int sql_eval(JanetArgs args) {
+static Janet sql_eval(int32_t argc, Janet *argv) {
+    janet_arity(argc, 2, 3);
     const char *err;
     sqlite3_stmt *stmt = NULL, *stmt_next = NULL;
-    const uint8_t *query;
-
-    JANET_MINARITY(args, 2);
-    JANET_MAXARITY(args, 3);
-    JANET_CHECKABSTRACT(args, 0, &sql_conn_type);
-    Db *db = (Db *)janet_unwrap_abstract(args.v[0]);
-    if (db->flags & FLAG_CLOSED) {
-        JANET_THROW(args, MSG_DB_CLOSED);
-    }
-    JANET_ARG_STRING(query, args, 1);
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    const uint8_t *query = janet_getstring(argv, 1);
     if (has_null(query, janet_string_length(query))) {
         err = "cannot have embedded NULL in sql statememts";
         goto error;
@@ -321,9 +308,9 @@ static int sql_eval(JanetArgs args) {
                 if (err) goto error;
             }
             /* Bind params to next statement*/
-            if (args.n == 3) {
+            if (argc == 3) {
                 /* parameters */
-                err = bindmany(stmt_next, args.v[2]);
+                err = bindmany(stmt_next, argv[2]);
                 if (err) goto error;
             }
         }
@@ -334,36 +321,31 @@ static int sql_eval(JanetArgs args) {
     } while (NULL != stmt);
 
     /* Good return path */
-    JANET_RETURN_ARRAY(args, rows);
+    return janet_wrap_array(rows);
 
 error:
     if (stmt) sqlite3_finalize(stmt);
     if (stmt_next) sqlite3_finalize(stmt_next);
-    JANET_THROW(args, err);
+    janet_panic(err);
+    return janet_wrap_nil();
 }
 
 /* Gets the last inserted row id */
-static int sql_last_insert_rowid(JanetArgs args) {
-    JANET_FIXARITY(args, 1);
-    JANET_CHECKABSTRACT(args, 0, &sql_conn_type);
-    Db *db = (Db *)janet_unwrap_abstract(args.v[0]);
-    if (db->flags & FLAG_CLOSED) {
-        JANET_THROW(args, MSG_DB_CLOSED);
-    }
+static Janet sql_last_insert_rowid(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
     sqlite3_int64 id = sqlite3_last_insert_rowid(db->handle);
-    JANET_RETURN_NUMBER(args, (double) id);
+    return janet_wrap_number((double) id);
 }
 
 /* Get the sqlite3 errcode */
-static int sql_error_code(JanetArgs args) {
-    JANET_FIXARITY(args, 1);
-    JANET_CHECKABSTRACT(args, 0, &sql_conn_type);
-    Db *db = (Db *)janet_unwrap_abstract(args.v[0]);
-    if (db->flags & FLAG_CLOSED) {
-        JANET_THROW(args, MSG_DB_CLOSED);
-    }
+static Janet sql_error_code(int32_t argc, Janet *argv) {
+    janet_fixarity(argc, 1);
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
     int errcode = sqlite3_errcode(db->handle);
-    JANET_RETURN_INTEGER(args, errcode);
+    return janet_wrap_integer(errcode);
 }
 
 /*****************************************************************************/
@@ -404,8 +386,6 @@ static const JanetReg cfuns[] = {
     {NULL, NULL, NULL}
 };
 
-JANET_MODULE_ENTRY(JanetArgs args) {
-    JanetTable *env = janet_env(args);
+JANET_MODULE_ENTRY(JanetTable *env) {
     janet_cfuns(env, "sqlite3", cfuns);
-    return 0;
 }
