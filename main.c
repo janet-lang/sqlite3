@@ -48,10 +48,14 @@ static int gcsqlite(void *p, size_t s) {
     return 0;
 }
 
+static Janet sql_conn_get(void *p, Janet key);
+
 static const JanetAbstractType sql_conn_type = {
     "sqlite3.connection",
     gcsqlite,
     NULL,
+    sql_conn_get,
+    NULL
 };
 
 /* Open a new database connection */
@@ -346,6 +350,22 @@ static Janet sql_error_code(int32_t argc, Janet *argv) {
     if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
     int errcode = sqlite3_errcode(db->handle);
     return janet_wrap_integer(errcode);
+}
+
+static JanetMethod conn_methods[] = {
+    {"error-code", sql_error_code},
+    {"close", sql_close},
+    {"eval", sql_eval},
+    {"last-insert-rowid", sql_last_insert_rowid},
+    {NULL, NULL}
+};
+
+static Janet sql_conn_get(void *p, Janet key) {
+    (void) p;
+    if (!janet_checktype(key, JANET_KEYWORD)) {
+        janet_panicf("expected keyword, get %v", key);
+    }
+    return janet_getmethod(janet_unwrap_keyword(key), conn_methods);
 }
 
 /*****************************************************************************/
