@@ -55,6 +55,8 @@ static const JanetAbstractType sql_conn_type = {
     gcsqlite,
     NULL,
     sql_conn_get,
+    NULL,
+    NULL,
     NULL
 };
 
