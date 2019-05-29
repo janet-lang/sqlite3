@@ -4,10 +4,10 @@ This native module proves sqlite bindings for janet.
 
 ## Building
 
-To build, use the build.janet script and make sure you have janet installed.
+To build, use the `jpm` tool and make sure you have janet installed.
 
 ```
-janet build.janet
+jpm build
 ```
 
 ## Example Usage
