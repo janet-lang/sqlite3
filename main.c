@@ -21,7 +21,7 @@
 */
 
 #include "sqlite3.h"
-#include <janet/janet.h>
+#include <janet.h>
 
 #define FLAG_CLOSED 1
 
