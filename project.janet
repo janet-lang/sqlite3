@@ -7,4 +7,5 @@
 
 (declare-native
     :name "sqlite3"
+    :cflags ["-pthread"]
     :source @["sqlite3.c" "main.c"])
