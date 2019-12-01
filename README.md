@@ -25,7 +25,7 @@ janet:3:> (sql/eval db `CREATE TABLE customers(id INTEGER PRIMARY KEY, name TEXT
 janet:4:> (sql/eval db `INSERT INTO customers VALUES(:id, :name);` {:name "John" :id 12345})
 @[]
 janet:5:> (sql/eval db `SELECT * FROM customers;`)
-@[{"id" 12345 "name" "John"}]
+@[{:id 12345 :name "John"}]
 ```
 
 Finally, close the database connection when done with it.

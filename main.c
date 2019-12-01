@@ -223,7 +223,7 @@ static const char *execute_collect(sqlite3_stmt *stmt, JanetArray *rows) {
     /* Get column names */
     Janet *tupstart = janet_tuple_begin(ncol);
     for (int i = 0; i < ncol; i++) {
-        tupstart[i] = janet_cstringv(sqlite3_column_name(stmt, i));
+        tupstart[i] = janet_ckeywordv(sqlite3_column_name(stmt, i));
     }
     const Janet *colnames = janet_tuple_end(tupstart);
 
