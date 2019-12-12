@@ -48,7 +48,11 @@ static int gcsqlite(void *p, size_t s) {
     return 0;
 }
 
+#if JANET_VERSION_MAJOR == 1 && JANET_VERSION_MINOR < 6
 static Janet sql_conn_get(void *p, Janet key);
+#else
+static int sql_conn_get(void *p, Janet key, Janet *out);
+#endif
 
 static const JanetAbstractType sql_conn_type = {
     "sqlite3.connection",
@@ -360,6 +364,7 @@ static JanetMethod conn_methods[] = {
     {NULL, NULL}
 };
 
+#if JANET_VERSION_MAJOR == 1 && JANET_VERSION_MINOR < 6
 static Janet sql_conn_get(void *p, Janet key) {
     (void) p;
     if (!janet_checktype(key, JANET_KEYWORD)) {
@@ -367,6 +372,15 @@ static Janet sql_conn_get(void *p, Janet key) {
     }
     return janet_getmethod(janet_unwrap_keyword(key), conn_methods);
 }
+#else
+static int sql_conn_get(void *p, Janet key, Janet *out) {
+    (void) p;
+    if (!janet_checktype(key, JANET_KEYWORD)) {
+        janet_panicf("expected keyword, get %v", key);
+    }
+    return janet_getmethod(janet_unwrap_keyword(key), conn_methods, out);
+}
+#endif
 
 /*****************************************************************************/
 
