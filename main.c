@@ -59,10 +59,9 @@ static const JanetAbstractType sql_conn_type = {
     gcsqlite,
     NULL,
     sql_conn_get,
-    NULL,
-    NULL,
-    NULL,
-    NULL
+#ifdef JANET_ATEND_GET
+    JANET_ATEND_GET
+#endif
 };
 
 /* Open a new database connection */
@@ -227,7 +226,7 @@ static const char *execute_collect(sqlite3_stmt *stmt, JanetArray *rows) {
     /* Get column names */
     Janet *tupstart = janet_tuple_begin(ncol);
     for (int i = 0; i < ncol; i++) {
-        tupstart[i] = janet_cstringv(sqlite3_column_name(stmt, i));
+        tupstart[i] = janet_ckeywordv(sqlite3_column_name(stmt, i));
     }
     const Janet *colnames = janet_tuple_end(tupstart);
 
