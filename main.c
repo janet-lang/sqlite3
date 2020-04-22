@@ -387,7 +387,7 @@ static const JanetReg cfuns[] = {
     {"open", sql_open, 
         "(sqlite3/open path)\n\n"
         "Opens a sqlite3 database on disk. Returns the database handle if the database was opened "
-        "successfully, and otheriwse throws an error."
+        "successfully, and otherwise throws an error."
     },
     {"close", sql_close, 
         "(sqlite3/close db)\n\n"
@@ -396,7 +396,7 @@ static const JanetReg cfuns[] = {
     {"eval", sql_eval, 
         "(sqlite3/eval db sql [,params])\n\n"
         "Evaluate sql in the context of database db. Multiple sql statements "
-        "can be changed together, and optionally parameters maybe passed in. "
+        "can be chained together, and optionally parameters maybe passed in. "
         "The optional parameters maybe either an indexed data type (tuple or array), or a dictionary "
         "data type (struct or table). If params is a tuple or array, then sqlite "
         "parameters are substituted using indices. For example:\n\n"
