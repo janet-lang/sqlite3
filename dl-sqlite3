@@ -1,0 +1,17 @@
+#! /usr/bin/env janet
+
+# Update to latest version at https://www.sqlite.org/download.html
+(def version "3330000") 
+
+(def unpacked (string "sqlite-amalgamation-" version))
+(def zip-file (string "sqlite-amalgamation-" version ".zip"))
+(def url (string "https://www.sqlite.org/2020/" zip-file))
+
+(defn run [& args]
+  (os/execute args :px))
+
+(run "wget" url)
+(run "unzip" "-o" zip-file)
+(run "cp" "-v" (string unpacked "/sqlite3.c") "./")
+(run "cp" "-v" (string unpacked "/sqlite3.h") "./")
+(run "rm" "-rfv" zip-file unpacked)
