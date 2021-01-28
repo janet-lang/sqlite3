@@ -2,6 +2,12 @@
 
 This native module proves sqlite bindings for janet.
 
+## Install
+
+```
+jpm install sqlite3
+```
+
 ## Building
 
 To build, use the `jpm` tool and make sure you have janet installed.
