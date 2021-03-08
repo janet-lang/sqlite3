@@ -15,6 +15,14 @@ To build, use the `jpm` tool and make sure you have janet installed.
 ```
 jpm build
 ```
+## Update the embedded SQLite version
+
+You can use the included script to update the version of SQLite included.
+```
+jpm dl-sqlite
+```
+
+You can find the latest version https://sqlite.org/index.html.
 
 ## Example Usage
 
