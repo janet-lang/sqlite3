@@ -17,9 +17,9 @@ jpm build
 ```
 ## Update the embedded SQLite version
 
-You can use the included script to update the version of SQLite included.
+You can use the jpm rule to update the version of SQLite included.
 ```
-jpm dl-sqlite
+jpm run update-sqlite3
 ```
 
 You can find the latest version https://sqlite.org/index.html.
