@@ -1,4 +1,4 @@
-(import build/sqlite3 :as sql)
+(import /build/sqlite3 :as sql)
 
 #
 # Testing
