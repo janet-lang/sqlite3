@@ -25,7 +25,7 @@ This package allows one to use it instead of the SQLite sources included with th
 To do this use:
 
 ```
-export USE_SYSTEM_SQLITE=1
+export JANET_SYSTEM_SQLITE=1
 jpm build
 ```
 

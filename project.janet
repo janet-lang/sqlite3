@@ -6,7 +6,7 @@
   :repo "git+https://github.com/janet-lang/sqlite3.git")
 
 
-(def use-system-lib (= "1" (os/getenv "USE_SYSTEM_SQLITE" 0)))
+(def use-system-lib (= "1" (os/getenv "JANET_SYSTEM_SQLITE" 0)))
 
 (defn pkg-config [what]
   (def f (file/popen (string "pkg-config " what)))
