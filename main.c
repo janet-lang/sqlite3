@@ -20,7 +20,11 @@
 * IN THE SOFTWARE.
 */
 
+#ifdef USE_SYSTEM_SQLITE
+#include <sqlite3.h>
+#else
 #include "sqlite3.h"
+#endif
 #include <janet.h>
 
 #define FLAG_CLOSED 1
