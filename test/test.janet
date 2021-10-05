@@ -15,3 +15,13 @@
 (sql/eval db `INSERT INTO people values(:name, :age)` {:name "Joe" :age 50})
 (def results (sql/eval db `SELECT * FROM people`))
 (assert (= (length results) 4))
+
+(def update-result
+  (-> (sql/eval db
+                `UPDATE people set name = :new_name where name = :old_name RETURNING name, age`
+                {:new_name "Harry" :old_name "Paul"})
+      (first)))
+(assert (= update-result {:name "Harry" :age 30}))
+
+
+(sql/close db)
