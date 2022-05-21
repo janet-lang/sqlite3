@@ -8,21 +8,24 @@
 
 (def use-system-lib (= "1" (os/getenv "JANET_SYSTEM_SQLITE" 0)))
 
-(defn pkg-config [what]
-  (def f (file/popen (string "pkg-config " what)))
+(defn pkg-config [what &opt env]
+  (default env {})
+  (def p (os/spawn ["pkg-config" ;what] :p (merge {:out :pipe} env)))
+  (:wait p)
+  (unless (zero? (p :return-code))
+    (error "pkg-config failed!"))
   (def v (->>
-           (file/read f :all)
+           (:read (p :out) :all)
            (string/trim)
            (string/split " ")))
-  (unless (zero? (file/close f))
-    (error "pkg-config failed!"))
   v)
 
 (if use-system-lib
   (declare-native
     :name "sqlite3"
-    :cflags (pkg-config "--keep-system-cflags sqlite3 --cflags")
-    :lflags (pkg-config "sqlite3 --libs")
+    :cflags (pkg-config ["sqlite3" "--cflags"]
+                        {"PKG_CONFIG_ALLOW_SYSTEM_CFLAGS" "1"})
+    :lflags (pkg-config ["sqlite3" "--libs"])
     :source @["main.c"]
     :defines {"USE_SYSTEM_SQLITE" use-system-lib})
   (declare-native
