@@ -390,7 +390,7 @@ static int sql_conn_get(void *p, Janet key, Janet *out) {
 static const JanetReg cfuns[] = {
     {"open", sql_open, 
         "(sqlite3/open path)\n\n"
-        "Opens a sqlite3 database on disk. Returns the database handle if the database was opened "
+        "Opens a sqlite3 database on disk or in-memory when passed \":memory:\" as path. Returns the database handle if the database was opened "
         "successfully, and otherwise throws an error."
     },
     {"close", sql_close, 
