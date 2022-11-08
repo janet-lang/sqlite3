@@ -1,5 +1,6 @@
 (declare-project
   :name "sqlite3"
+  :description "Janet bindings to SQLite."
   :author "Calvin Rose"
   :license "MIT"
   :url "https://github.com/janet-lang/sqlite3"
