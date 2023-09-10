@@ -60,12 +60,28 @@ janet:4:> (sql/eval db `INSERT INTO customers VALUES(:id, :name);` {:name "John"
 @[]
 janet:5:> (sql/eval db `SELECT * FROM customers;`)
 @[{"id" 12345 "name" "John"}]
+
+### Using SQLite Extensions
+
+```
+janet:6:> (sql/allow-loading-extensions db)
+false
+janet:7:> (sql/load-extension db "/tmp/base64")
+error: not authorized
+  in sqlite3/load-extension
+  in _thunk [janet] (tailcall) on line 4, column 1
+janet:8:> (sql/allow-loading-extensions db true)
+true
+janet:9:> (sql/load-extension db "/tmp/base64")
+"/tmp/base64"
+janet:10:> (sql/eval db "select base64('YWJjMTIz') as b64")
+@[{:b64 @"abc123"}]
 ```
 
 Finally, close the database connection when done with it.
 
 ```
-janet:6:> (sql/close db)
+janet:11:> (sql/close db)
 nil
 ```
 
