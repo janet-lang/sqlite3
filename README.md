@@ -61,7 +61,7 @@ janet:4:> (sql/eval db `INSERT INTO customers VALUES(:id, :name);` {:name "John"
 janet:5:> (sql/eval db `SELECT * FROM customers;`)
 @[{"id" 12345 "name" "John"}]
 
-### Using SQLite Extensions
+Load and use SQLite Extensions.
 
 ```
 janet:6:> (sql/allow-loading-extensions db)
