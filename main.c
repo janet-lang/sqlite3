@@ -359,11 +359,48 @@ static Janet sql_error_code(int32_t argc, Janet *argv) {
     return janet_wrap_integer(errcode);
 }
 
+/* Toggle or report whether extension loading is allowed */
+static Janet sql_allow_loading_extensions(int32_t argc, Janet *argv) {
+    janet_arity(argc, 1, 2);
+    const char *err;
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    int enable_loading = janet_optboolean(argv, argc, 1, -1);
+    int setting;
+    int status = sqlite3_db_config(db->handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, enable_loading, &setting);
+    if (status != SQLITE_OK) {
+        err = sqlite3_errmsg(db->handle);
+        janet_panic(err);
+    }
+    return janet_wrap_boolean(setting);
+}
+
+/* Load extension */
+static Janet sql_load_extension(int32_t argc, Janet *argv) {
+    janet_arity(argc, 2, 3);
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    const char *zFile = janet_getcstring(argv, 1);
+    const char *zProc = janet_optcstring(argv, argc, 2, NULL);
+    char *pzErrMsg;
+    int status = sqlite3_load_extension(db->handle, zFile, zProc, &pzErrMsg);
+    if (status != SQLITE_OK) {
+        size_t n = strlen(pzErrMsg);
+        void *jErrMsg = janet_smalloc(n);
+        memcpy(jErrMsg, pzErrMsg, n);
+        sqlite3_free(pzErrMsg);
+        janet_panic(jErrMsg);
+    }
+    return janet_wrap_string(zFile);
+}
+
 static JanetMethod conn_methods[] = {
     {"error-code", sql_error_code},
     {"close", sql_close},
     {"eval", sql_eval},
     {"last-insert-rowid", sql_last_insert_rowid},
+    {"allow-loading-extensions", sql_allow_loading_extensions},
+    {"load-extension", sql_load_extension},
     {NULL, NULL}
 };
 
@@ -419,6 +456,17 @@ static const JanetReg cfuns[] = {
         "(sqlite3/error-code db)\n\n"
         "Returns the error number of the last sqlite3 command that threw an error. Cross "
         "check these numbers with the SQLite documentation for more information."
+    },
+    {"allow-loading-extensions", sql_allow_loading_extensions,
+        "(sqlite3/allow-loading-extensions db [boolean-param])\n\n"
+        "Reports or toggles the setting to load SQLite extensions according to presence and value "
+        "of boolean-param. Returns a boolean value indicating whether extension loading is allowed."
+    },
+    {"load-extension", sql_load_extension,
+        "(sqlite3/load-extension db library-file-path [library-entrypoint])\n\n"
+        "Loads the SQLite extension library from library-file-path, optionally specifying "
+        "the library-entrypoint. Extension loading must be enabled prior to calling this function. "
+        "Returns library-file-path."
     },
     {NULL, NULL, NULL}
 };
