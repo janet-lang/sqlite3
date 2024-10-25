@@ -11,7 +11,7 @@
 
 (defn pkg-config [what &opt env]
   (default env {})
-  (def p (os/spawn ["pkg-config" ;what] :p (merge {:out :pipe} env)))
+  (def p (os/spawn ["pkg-config" ;what] :pe (merge {:out :pipe} env)))
   (:wait p)
   (unless (zero? (p :return-code))
     (error "pkg-config failed!"))
