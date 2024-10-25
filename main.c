@@ -108,7 +108,7 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
             res = sqlite3_bind_null(stmt, index);
             break;
         case JANET_BOOLEAN:
-            res = sqlite3_bind_int(stmt, index, janet_unwrap_integer(value));
+            res = sqlite3_bind_int(stmt, index, janet_unwrap_boolean(value));
             break;
         case JANET_NUMBER:
             res = sqlite3_bind_double(stmt, index, janet_unwrap_number(value));
