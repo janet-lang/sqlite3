@@ -385,9 +385,9 @@ static Janet sql_eval_to_dataframe(int32_t argc, Janet *argv) {
 }
 
 /* Execute statement repeatedly against parameter set */
-static Janet eql_eval_many(int32_t argc, Janet *argv) {
+static Janet sql_eval_many(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 3);
-    const char *err;
+    const uint8_t *err;
     sqlite3_stmt *stmt = NULL, *stmt_extra = NULL;
     Db *db = janet_getabstract(argv, 0, &sql_conn_type);
     if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
@@ -409,7 +409,6 @@ static Janet eql_eval_many(int32_t argc, Janet *argv) {
     /* Ignore trailing whitespace and comments, err on anything else*/
     /* (treated like a 2nd statement which won't compile) */
     if (sqlite3_prepare_v2(db->handle, c, -1, &stmt_extra, &c) != SQLITE_OK) {
-        /* because this executes many things, I think we need to copy the messages in such spots*/
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto error;
     }
@@ -418,9 +417,8 @@ static Janet eql_eval_many(int32_t argc, Janet *argv) {
         goto error;
     }
 
-    /* Wrap in a transaction (if not already in one) */
-    int own_txn = sqlite3_get_autocommit(db->handle);
-    if (own_txn && sqlite3_exec(db->handle, "BEGIN;", NULL, NULL, NULL) != SQLITE_OK) {
+    /* savepoint starts transaction when not in one and nests when inside one */
+    if (sqlite3_exec(db->handle, "SAVEPOINT eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto error;
     }
@@ -430,11 +428,14 @@ static Janet eql_eval_many(int32_t argc, Janet *argv) {
         if (berr) { err = janet_cstring(berr); goto rollback; }
         berr = execute(stmt);
         if (berr) { err = janet_cstring(berr); goto rollback; }
-        sqlite3_reset(stmt);
+        if (sqlite3_reset(stmt) != SQLITE_OK) {
+            err = janet_cstring(sqlite3_errmsg(db->handle));
+            goto rollback;
+        }
         sqlite3_clear_bindings(stmt);
     }
 
-    if (own_txn && sqlite3_exec(db->handle, "COMMIT;", NULL, NULL, NULL) != SQLITE_OK) {
+    if (sqlite3_exec(db->handle, "RELEASE eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto rollback;
     }
@@ -442,7 +443,7 @@ static Janet eql_eval_many(int32_t argc, Janet *argv) {
     return janet_wrap_nil();
 
 rollback:
-    if (own_txn) sqlite3_exec(db->handle, "ROLLBACK;", NULL, NULL, NULL);
+    sqlite3_exec(db->handle, "ROLLBACK TO eval_many; RELEASE eval_many;", NULL, NULL, NULL);
 error:
     if (stmt) sqlite3_finalize(stmt);
     if (stmt_extra) sqlite3_finalize(stmt_extra);
@@ -509,7 +510,7 @@ static JanetMethod conn_methods[] = {
     {"last-insert-rowid", sql_last_insert_rowid},
     {"allow-loading-extensions", sql_allow_loading_extensions},
     {"load-extension", sql_load_extension},
-    {"eval-many", eql_eval_many},
+    {"eval-many", sql_eval_many},
     {NULL, NULL}
 };
 
@@ -584,13 +585,13 @@ static const JanetReg cfuns[] = {
         "the library-entrypoint. Extension loading must be enabled prior to calling this function. "
         "Returns library-file-path."
     },
-    {"eval-many", eql_eval_many,
+    {"eval-many", sql_eval_many,
         "(sqlite3/eval-many db sql param-sets)\n\n"
         "Evaluates an sql statement once per element of param-sets (like map) "
         "only preparing statement once, binding arguments like the params argument of "
         "(sqlite3/eval ...); both indexed and named parameters work. All executions "
-        "run inside one transaction unless the connection is already in a transaction, "
-        "and any error rolls it back. The purpose is bulk writes, so it returns nil.\n\n"
+        "run inside a savepoint (equivalent to a transaction) "
+        "where any error rolls it back. The purpose is bulk writes, so it returns nil.\n\n"
         "  * (sqlite3/eval-many db \"INSERT INTO tracks VALUES (?, ?, ?);\"\n"
         "        (map tuple (tracks :title) (tracks :bpm) (tracks :gain_db)))\n"
     },
