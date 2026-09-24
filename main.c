@@ -384,6 +384,86 @@ static Janet sql_eval_to_dataframe(int32_t argc, Janet *argv) {
     return sql_eval_impl(argc, argv, COLLECT_TO_DF);
 }
 
+/* Execute statement repeatedly against parameter set */
+static Janet sql_eval_many(int32_t argc, Janet *argv) {
+    janet_arity(argc, 3, 4);
+    const uint8_t *err;
+    sqlite3_stmt *stmt = NULL, *stmt_extra = NULL;
+    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    const uint8_t *query = janet_getstring(argv, 1);
+    if (has_null(query, janet_string_length(query))) {
+        janet_panic("cannot have embedded NULL in sql statements");
+    }
+    const Janet *sets;
+    int32_t nsets;
+    if (!janet_indexed_view(argv[2], &sets, &nsets)) {
+        janet_panic("expected array or tuple of parameter sets");
+    }
+
+    int keep_partial = 0;
+    if (argc == 4 && !janet_checktype(argv[3], JANET_NIL)) {
+        if (!janet_keyeq(argv[3], "keep-partial")) janet_panicf("expected :keep-partial, got %v", argv[3]);
+        keep_partial = 1;
+    }
+
+    const char *c = (const char *)query;
+    if (sqlite3_prepare_v2(db->handle, c, -1, &stmt, &c) != SQLITE_OK) {
+        janet_panic(sqlite3_errmsg(db->handle));
+    }
+    if (NULL == stmt) janet_panic("expected a sql statement");
+    /* Ignore trailing whitespace and comments, err on anything else*/
+    /* (treated like a 2nd statement which won't compile) */
+    if (sqlite3_prepare_v2(db->handle, c, -1, &stmt_extra, &c) != SQLITE_OK) {
+        err = janet_cstring(sqlite3_errmsg(db->handle));
+        goto error;
+    }
+    if (NULL != stmt_extra) {
+        err = janet_cstring("expected only one sql statement");
+        goto error;
+    }
+
+    /* savepoint starts transaction when not in one and nests when inside one */
+    if (sqlite3_exec(db->handle, "SAVEPOINT eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
+        err = janet_cstring(sqlite3_errmsg(db->handle));
+        goto error;
+    }
+
+    for (int32_t i = 0; i < nsets; i++) {
+        const char *berr = bindmany(stmt, sets[i]);
+        if (berr) { err = janet_cstring(berr); goto rollback; }
+        berr = execute(stmt);
+        if (berr) { err = janet_cstring(berr); goto rollback; }
+        if (sqlite3_reset(stmt) != SQLITE_OK) {
+            err = janet_cstring(sqlite3_errmsg(db->handle));
+            goto rollback;
+        }
+        /* No check, on every non-NULL statement it returns SQLITE_OK https://github.com/sqlite/sqlite/blob/f544d3599a10b95aa3ee8f8c1fd182f6a2fc2798/src/vdbeapi.c#L157
+         * No failure modes given https://www.sqlite.org/c3ref/clear_bindings.html */
+        sqlite3_clear_bindings(stmt);
+    }
+
+    if (sqlite3_exec(db->handle, "RELEASE eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
+        err = janet_cstring(sqlite3_errmsg(db->handle));
+        goto rollback;
+    }
+    /* This deletes the prepared statement
+     * No check, returns SQLITE_OK on last successful/not run step, handled above https://sqlite.org/c3ref/finalize.html */
+    sqlite3_finalize(stmt);
+    return janet_wrap_nil();
+
+rollback:
+    /* If RELEASE fails (e.g. for SQLITE_BUSY), the transaction's still open, so we rollback */
+    if (!keep_partial || sqlite3_exec(db->handle, "RELEASE eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->handle, "ROLLBACK TO eval_many; RELEASE eval_many;", NULL, NULL, NULL);
+    }
+error:
+    if (stmt) sqlite3_finalize(stmt);
+    if (stmt_extra) sqlite3_finalize(stmt_extra);
+    janet_panics(err);
+    return janet_wrap_nil();
+}
+
 /* Gets the last inserted row id */
 static Janet sql_last_insert_rowid(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
@@ -443,6 +523,7 @@ static JanetMethod conn_methods[] = {
     {"last-insert-rowid", sql_last_insert_rowid},
     {"allow-loading-extensions", sql_allow_loading_extensions},
     {"load-extension", sql_load_extension},
+    {"eval-many", sql_eval_many},
     {NULL, NULL}
 };
 
@@ -516,6 +597,16 @@ static const JanetReg cfuns[] = {
         "Loads the SQLite extension library from library-file-path, optionally specifying "
         "the library-entrypoint. Extension loading must be enabled prior to calling this function. "
         "Returns library-file-path."
+    },
+    {"eval-many", sql_eval_many,
+        "(sqlite3/eval-many db sql param-sets &opt :keep-partial)\n\n"
+        "Evaluates an sql statement once per element of param-sets (like map) "
+        "only preparing statement once, binding arguments like the params argument of "
+        "(sqlite3/eval ...); both indexed and named parameters work. All executions "
+        "run inside a savepoint (equivalent to a transaction) where any error rolls it back "
+        "unless given `:keep-partial`. The purpose is bulk writes, so it returns nil.\n\n"
+        "  * (sqlite3/eval-many db \"INSERT INTO tracks VALUES (?, ?, ?);\"\n"
+        "        (map tuple (tracks :title) (tracks :bpm) (tracks :gain_db)))\n"
     },
     {NULL, NULL, NULL}
 };
