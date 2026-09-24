@@ -432,6 +432,8 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
             err = janet_cstring(sqlite3_errmsg(db->handle));
             goto rollback;
         }
+        /* No check, on every non-NULL statement it returns SQLITE_OK https://github.com/sqlite/sqlite/blob/f544d3599a10b95aa3ee8f8c1fd182f6a2fc2798/src/vdbeapi.c#L157
+         * No failure modes given https://www.sqlite.org/c3ref/clear_bindings.html */
         sqlite3_clear_bindings(stmt);
     }
 
@@ -439,6 +441,8 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto rollback;
     }
+    /* This deletes the prepared statement
+     * No check, returns SQLITE_OK on last successful/not run step, handled above https://sqlite.org/c3ref/finalize.html */
     sqlite3_finalize(stmt);
     return janet_wrap_nil();
 
