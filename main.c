@@ -386,7 +386,7 @@ static Janet sql_eval_to_dataframe(int32_t argc, Janet *argv) {
 
 /* Execute statement repeatedly against parameter set */
 static Janet sql_eval_many(int32_t argc, Janet *argv) {
-    janet_fixarity(argc, 3);
+    janet_arity(argc, 3, 4);
     const uint8_t *err;
     sqlite3_stmt *stmt = NULL, *stmt_extra = NULL;
     Db *db = janet_getabstract(argv, 0, &sql_conn_type);
@@ -399,6 +399,12 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     int32_t nsets;
     if (!janet_indexed_view(argv[2], &sets, &nsets)) {
         janet_panic("expected array or tuple of parameter sets");
+    }
+
+    int keep_partial = 0;
+    if (argc == 4 && !janet_checktype(argv[3], JANET_NIL)) {
+        if (!janet_keyeq(argv[3], "keep-partial")) janet_panicf("expected :keep-partial, got %v", argv[3]);
+        keep_partial = 1;
     }
 
     const char *c = (const char *)query;
@@ -447,7 +453,10 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     return janet_wrap_nil();
 
 rollback:
-    sqlite3_exec(db->handle, "ROLLBACK TO eval_many; RELEASE eval_many;", NULL, NULL, NULL);
+    /* If RELEASE fails (e.g. for SQLITE_BUSY), the transaction's still open, so we rollback */
+    if (!keep_partial || sqlite3_exec(db->handle, "RELEASE eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
+        sqlite3_exec(db->handle, "ROLLBACK TO eval_many; RELEASE eval_many;", NULL, NULL, NULL);
+    }
 error:
     if (stmt) sqlite3_finalize(stmt);
     if (stmt_extra) sqlite3_finalize(stmt_extra);
@@ -590,12 +599,12 @@ static const JanetReg cfuns[] = {
         "Returns library-file-path."
     },
     {"eval-many", sql_eval_many,
-        "(sqlite3/eval-many db sql param-sets)\n\n"
+        "(sqlite3/eval-many db sql param-sets &opt :keep-partial)\n\n"
         "Evaluates an sql statement once per element of param-sets (like map) "
         "only preparing statement once, binding arguments like the params argument of "
         "(sqlite3/eval ...); both indexed and named parameters work. All executions "
-        "run inside a savepoint (equivalent to a transaction) "
-        "where any error rolls it back. The purpose is bulk writes, so it returns nil.\n\n"
+        "run inside a savepoint (equivalent to a transaction) where any error rolls it back "
+        "unless given `:keep-partial`. The purpose is bulk writes, so it returns nil.\n\n"
         "  * (sqlite3/eval-many db \"INSERT INTO tracks VALUES (?, ?, ?);\"\n"
         "        (map tuple (tracks :title) (tracks :bpm) (tracks :gain_db)))\n"
     },
