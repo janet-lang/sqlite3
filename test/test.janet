@@ -25,3 +25,9 @@
     (sql/eval db `CREATE TABLE t (id INTEGER PRIMARY KEY);`)
     (protect (sql/eval-many db `INSERT INTO t VALUES (?);` [[1] [2] [1] [3]] :keep-partial)) # fails from repeated key, 3 not inserted
     (assert (= 2 (length (sql/eval db `SELECT * FROM t;`))) ":keep-partial keeps the sets before the failing one")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (sql/eval db `CREATE TABLE t(x); INSERT INTO t VALUES (1);`)
+    (assert (deep= @[{:x 1}] (sql/eval db `SELECT x FROM t;`))
+            "Statements see the schema changes of prior statements")))

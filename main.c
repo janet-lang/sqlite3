@@ -318,62 +318,46 @@ typedef enum { COLLECT_ROWS, COLLECT_TO_DF } CollectMode;
 /* Evaluate sql string, collecting the final result to the target shape */
 static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
     janet_arity(argc, 2, 3);
-    const char *err;
-    sqlite3_stmt *stmt = NULL, *stmt_next = NULL;
+    const uint8_t *err;
+    sqlite3_stmt *stmt = NULL;
     Db *db = janet_getabstract(argv, 0, &sql_conn_type);
     if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
     const uint8_t *query = janet_getstring(argv, 1);
     if (has_null(query, janet_string_length(query))) {
-        err = "cannot have embedded NULL in sql statements";
-        goto error;
+        janet_panic("cannot have embedded NULL in sql statements");
     }
-    JanetArray *rows = (mode == COLLECT_ROWS)  ? janet_array(10) : NULL;
-    JanetTable *cols = (mode == COLLECT_TO_DF) ? janet_table(0)  : NULL;
+    JanetArray *rows = (mode == COLLECT_ROWS)  ? janet_array(0) : NULL;
+    JanetTable *cols = (mode == COLLECT_TO_DF) ? janet_table(0) : NULL;
     const char *c = (const char *)query;
 
     /* Evaluate all statements in a loop */
-    do {
+    while (*c) {
         /* Compile the next statement */
-        if (sqlite3_prepare_v2(db->handle, c, -1, &stmt_next, &c) != SQLITE_OK) {
-            err = sqlite3_errmsg(db->handle);
-            goto error;
+        if (sqlite3_prepare_v2(db->handle, c, -1, &stmt, &c) != SQLITE_OK) {
+            janet_panic(sqlite3_errmsg(db->handle));
         }
-        /* Check if we have found last statement */
-        if (NULL == stmt_next) {
-            /* Execute current statement and collect results */
-            if (stmt) {
-                err = (mode == COLLECT_TO_DF)
-                    ? execute_collect_to_dataframe(stmt, cols)
-                    : execute_collect(stmt, rows);
-                if (err) goto error;
-            }
+        /* Trailing whitespace and comments compile to no statement */
+        if (NULL == stmt) break;
+        const char *berr = (argc == 3) ? bindmany(stmt, argv[2]) : NULL;
+        if (berr) { err = janet_cstring(berr); goto error; }
+        /* Only returning last statement's result */
+        if (mode == COLLECT_TO_DF) {
+            cols = janet_table(0);
+            berr = execute_collect_to_dataframe(stmt, cols);
         } else {
-            /* Execute current statement but don't collect results. */
-            if (stmt) {
-                err = execute(stmt);
-                if (err) goto error;
-            }
-            /* Bind params to next statement*/
-            if (argc == 3) {
-                /* parameters */
-                err = bindmany(stmt_next, argv[2]);
-                if (err) goto error;
-            }
+            rows = janet_array(10);
+            berr = execute_collect(stmt, rows);
         }
-        /* rotate stmt and stmt_next */
-        /* No check, returns SQLITE_OK on last successful/not run step, handled above https://sqlite.org/c3ref/finalize.html */
+        if (berr) { err = janet_cstring(berr); goto error; }
         sqlite3_finalize(stmt);
-        stmt = stmt_next;
-        stmt_next = NULL;
-    } while (NULL != stmt);
-
+    }
     /* Good return path */
     return (mode == COLLECT_TO_DF) ? janet_wrap_table(cols) : janet_wrap_array(rows);
 
 error:
     sqlite3_finalize(stmt);
-    sqlite3_finalize(stmt_next);
-    janet_panic(err);
+    janet_panics(err);
+    return janet_wrap_nil();
 }
 
 static Janet sql_eval(int32_t argc, Janet *argv) {
@@ -412,8 +396,7 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
         janet_panic(sqlite3_errmsg(db->handle));
     }
     if (NULL == stmt) janet_panic("expected a sql statement");
-    /* Ignore trailing whitespace and comments, err on anything else*/
-    /* (treated like a 2nd statement which won't compile) */
+    /* Trailing whitespace and comments compile to no statement */
     if (sqlite3_prepare_v2(db->handle, c, -1, &stmt_extra, &c) != SQLITE_OK) {
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto error;
