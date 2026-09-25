@@ -24,13 +24,13 @@
   (defer (sql/close db)
     (sql/eval db `CREATE TABLE t (id INTEGER PRIMARY KEY);`)
     (protect (sql/eval-many db `INSERT INTO t VALUES (?);` [[1] [2] [1] [3]] :keep-partial)) # fails from repeated key, 3 not inserted
-    (assert (= 2 (length (sql/eval db `SELECT * FROM t;`))) ":keep-partial keeps the sets before the failing one")))
+    (assert (= 2 (length (sql/eval db `SELECT * FROM t;`))) ":keep-partial didn't keep sets before failing one")))
 
 (let [db (sql/open ":memory:")]
   (defer (sql/close db)
     (sql/eval db `CREATE TABLE t(x); INSERT INTO t VALUES (1);`)
     (assert (deep= @[{:x 1}] (sql/eval db `SELECT x FROM t;`))
-            "Statements don't see the schema changes of prior statements")))
+            "Statements didn't see the schema changes of prior statements")))
 
 (let [db (sql/open ":memory:")]
   (defer (sql/close db)
@@ -42,4 +42,4 @@
   (defer (sql/close db)
     (assert (deep= @[{:a 1 :b 2 :c 3}]
                    (sql/eval db `SELECT :a AS a, @b AS b, $c AS c;` {:a 1 :b 2 :c 3}))
-            "keyword keys bind parameters with any sqlite prefix")))
+            "keyword keys didn't bind parameters with any sqlite prefix")))
