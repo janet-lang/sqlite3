@@ -31,3 +31,9 @@
     (sql/eval db `CREATE TABLE t(x); INSERT INTO t VALUES (1);`)
     (assert (deep= @[{:x 1}] (sql/eval db `SELECT x FROM t;`))
             "Statements see the schema changes of prior statements")))
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (let [[ok err] (protect (sql/eval db `SELECT ?;` [1 2]))]
+      (assert (and (not ok) (= err "invalid index in sql parameters"))
+              "Additional positional parameters didn't get rejected before binding"))))
+

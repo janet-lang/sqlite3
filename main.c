@@ -152,7 +152,7 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
     int32_t len, cap;
     int limitindex = sqlite3_bind_parameter_count(stmt);
     if (janet_indexed_view(params, &seq, &len)) {
-        if (len > limitindex + 1) {
+        if (len > limitindex) {
             return "invalid index in sql parameters";
         }
         for (int i = 0; i < len; i++) {
