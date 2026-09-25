@@ -71,10 +71,14 @@ static const JanetAbstractType sql_conn_type = {
 /* Open a new database connection */
 static Janet sql_open(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    const uint8_t *filename = janet_getstring(argv, 0);
+    const char *filename = janet_getcstring(argv, 0);
     sqlite3 *conn;
-    int status = sqlite3_open((const char *)filename, &conn);
-    if (status != SQLITE_OK) janet_panic(sqlite3_errmsg(conn));
+    int status = sqlite3_open(filename, &conn);
+    if (status != SQLITE_OK) {
+        const uint8_t *msg = janet_cstring(sqlite3_errmsg(conn));
+        sqlite3_close_v2(conn);
+        janet_panics(msg);
+    }
     Db *db = (Db *) janet_abstract(&sql_conn_type, sizeof(Db));
     db->handle = conn;
     db->flags = 0;
