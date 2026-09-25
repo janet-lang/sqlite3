@@ -30,10 +30,16 @@
   (defer (sql/close db)
     (sql/eval db `CREATE TABLE t(x); INSERT INTO t VALUES (1);`)
     (assert (deep= @[{:x 1}] (sql/eval db `SELECT x FROM t;`))
-            "Statements see the schema changes of prior statements")))
+            "Statements don't see the schema changes of prior statements")))
+
 (let [db (sql/open ":memory:")]
   (defer (sql/close db)
     (let [[ok err] (protect (sql/eval db `SELECT ?;` [1 2]))]
       (assert (and (not ok) (= err "invalid index in sql parameters"))
               "Additional positional parameters didn't get rejected before binding"))))
 
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (assert (deep= @[{:a 1 :b 2 :c 3}]
+                   (sql/eval db `SELECT :a AS a, @b AS b, $c AS c;` {:a 1 :b 2 :c 3}))
+            "keyword keys bind parameters with any sqlite prefix")))

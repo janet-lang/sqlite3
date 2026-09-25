@@ -177,12 +177,19 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
                     break;
                 case JANET_KEYWORD:
                     {
-                        char *kw = (char *)janet_unwrap_keyword(kvs[i].key);
-                        /* Quick hack for keywords */
-                        char old = kw[-1];
-                        kw[-1] = ':';
-                        index = sqlite3_bind_parameter_index(stmt, kw - 1);
-                        kw[-1] = old;
+                        /* Find named parameter's index for keyword, trying each prefix sqlite accepts */
+                        const uint8_t *kw = janet_unwrap_keyword(kvs[i].key);
+                        int32_t kwlen = janet_string_length(kw);
+                        if (has_null(kw, kwlen)) break;
+                        char buf[64];
+                        char *name = (kwlen + 2 <= (int32_t) sizeof(buf)) ? buf : janet_smalloc(kwlen + 2);
+                        memcpy(name + 1, kw, kwlen);
+                        name[kwlen + 1] = '\0';
+                        for (const char *prefix = ":@$"; *prefix && !index; prefix++) {
+                            name[0] = *prefix;
+                            index = sqlite3_bind_parameter_index(stmt, name);
+                        }
+                        if (name != buf) janet_sfree(name);
                     }
                     break;
                 case JANET_STRING:
