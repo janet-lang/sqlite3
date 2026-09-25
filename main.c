@@ -242,16 +242,16 @@ static Janet column_value(sqlite3_stmt *stmt, int i) {
             return janet_wrap_number(sqlite3_column_double(stmt, i));
         case SQLITE_TEXT:
             {
+                const uint8_t *text = sqlite3_column_text(stmt, i);
                 int nbytes = sqlite3_column_bytes(stmt, i);
-                uint8_t *str = janet_string_begin(nbytes);
-                memcpy(str, sqlite3_column_text(stmt, i), nbytes);
-                return janet_wrap_string(janet_string_end(str));
+                return janet_stringv(text, nbytes);
             }
         case SQLITE_BLOB:
             {
+                const void *blob = sqlite3_column_blob(stmt, i);
                 int nbytes = sqlite3_column_bytes(stmt, i);
                 JanetBuffer *b = janet_buffer(nbytes);
-                memcpy(b->data, sqlite3_column_blob(stmt, i), nbytes);
+                if (nbytes) memcpy(b->data, blob, nbytes);
                 b->count = nbytes;
                 return janet_wrap_buffer(b);
             }
