@@ -361,7 +361,8 @@ static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
             }
         }
         /* rotate stmt and stmt_next */
-        if (stmt) sqlite3_finalize(stmt);
+        /* No check, returns SQLITE_OK on last successful/not run step, handled above https://sqlite.org/c3ref/finalize.html */
+        sqlite3_finalize(stmt);
         stmt = stmt_next;
         stmt_next = NULL;
     } while (NULL != stmt);
@@ -370,10 +371,9 @@ static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
     return (mode == COLLECT_TO_DF) ? janet_wrap_table(cols) : janet_wrap_array(rows);
 
 error:
-    if (stmt) sqlite3_finalize(stmt);
-    if (stmt_next) sqlite3_finalize(stmt_next);
+    sqlite3_finalize(stmt);
+    sqlite3_finalize(stmt_next);
     janet_panic(err);
-    return janet_wrap_nil();
 }
 
 static Janet sql_eval(int32_t argc, Janet *argv) {
@@ -447,8 +447,6 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto rollback;
     }
-    /* This deletes the prepared statement
-     * No check, returns SQLITE_OK on last successful/not run step, handled above https://sqlite.org/c3ref/finalize.html */
     sqlite3_finalize(stmt);
     return janet_wrap_nil();
 
@@ -458,8 +456,8 @@ rollback:
         sqlite3_exec(db->handle, "ROLLBACK TO eval_many; RELEASE eval_many;", NULL, NULL, NULL);
     }
 error:
-    if (stmt) sqlite3_finalize(stmt);
-    if (stmt_extra) sqlite3_finalize(stmt_extra);
+    sqlite3_finalize(stmt);
+    sqlite3_finalize(stmt_extra);
     janet_panics(err);
     return janet_wrap_nil();
 }
