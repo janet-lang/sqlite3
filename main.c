@@ -136,6 +136,24 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
                 res = sqlite3_bind_blob(stmt, index, buffer->data, buffer->count, SQLITE_STATIC);
             }
             break;
+ #ifdef JANET_INT_TYPES
+        case JANET_ABSTRACT:
+            switch (janet_is_int(value)) {
+                default:
+                    return "invalid sql value";
+                case JANET_INT_S64:
+                    res = sqlite3_bind_int64(stmt, index, janet_unwrap_s64(value));
+                    break;
+                case JANET_INT_U64:
+                    {
+                        uint64_t u = janet_unwrap_u64(value);
+                        if (u > INT64_MAX) return "integer too large for sqlite";
+                        res = sqlite3_bind_int64(stmt, index, (sqlite3_int64) u);
+                    }
+                    break;
+            }
+            break;
+#endif
     }
     if (res != SQLITE_OK) {
         sqlite3 *db = sqlite3_db_handle(stmt);
@@ -568,7 +586,9 @@ static const JanetReg cfuns[] = {
         "the programmer can use named parameters with tables or structs, like so:\n\n"
         "\t(sqlite3/eval db `SELECT * FROM tab WHERE id = :id;` {:id 123})\n\n"
         "Will return an array of rows, where each row contains a table where columns names "
-        "are keys for column values."
+        "are keys for column values.\n\n"
+        "Ints are returned as Janet numbers, rounding above 2^53. To read them `select` with"
+        "`CAST(col AS TEXT)` and parse with `int/s64` to read them exactly."
     },
     {"last-insert-rowid", sql_last_insert_rowid, 
         "(sqlite3/last-insert-rowid db)\n\n"

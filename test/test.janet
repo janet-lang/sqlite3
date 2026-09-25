@@ -43,3 +43,15 @@
     (assert (deep= @[{:a 1 :b 2 :c 3}]
                    (sql/eval db `SELECT :a AS a, @b AS b, $c AS c;` {:a 1 :b 2 :c 3}))
             "keyword keys didn't bind parameters with any sqlite prefix")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (assert (deep= @[{:same 1}]
+                   (sql/eval db `SELECT ? = 9007199254740993 AS same;` [(int/s64 "9007199254740993")]))
+            "int/s64 values don' convert to sqlite integers")
+    (assert (deep= @[{:same 1}]
+                   (sql/eval db `SELECT ? = 9007199254740993 AS same;` [(int/u64 "9007199254740993")]))
+            "int/u64 values within int64 don't convert to sqlite integers")
+    (let [[ok err] (protect (sql/eval db `SELECT ?;` [(int/u64 "18446744073709551615")]))]
+      (assert (and (not ok) (= err "integer too large for sqlite"))
+              "int/u64 values beyond int64 should not be accepted (Sqlite wants us under INT64_MAX)"))))
