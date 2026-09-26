@@ -34,6 +34,7 @@
 typedef struct {
     sqlite3* handle;
     int flags;
+    int errcode;
 } Db;
 
 /* Close a db, noop if already closed */
@@ -82,6 +83,8 @@ static Janet sql_open(int32_t argc, Janet *argv) {
     Db *db = (Db *) janet_abstract(&sql_conn_type, sizeof(Db));
     db->handle = conn;
     db->flags = 0;
+    /* 4 other funcs set this, for attribution purposes*/
+    db->errcode = SQLITE_OK;
     return janet_wrap_abstract(db);
 }
 
@@ -117,12 +120,20 @@ static const uint8_t *getquery(const Janet *argv, int32_t n) {
     }
     return query;
 }
+
+/* Record connection's error for error-code and copy msg, since sqlite calls overwrite */
+static const uint8_t *save_error(Db *db) {
+    db->errcode = sqlite3_errcode(db->handle);
+    return janet_cstring(sqlite3_errmsg(db->handle));
+}
+
 /* Bind a single parameter */
-static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
+static int bind1(sqlite3_stmt *stmt, int index, Janet value, const char **msg) {
     int res;
     switch (janet_type(value)) {
         default:
-            return "invalid sql value";
+            *msg = "invalid sql value";
+            return SQLITE_MISMATCH;
         case JANET_NIL:
             res = sqlite3_bind_null(stmt, index);
             break;
@@ -139,7 +150,8 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
                 const uint8_t *str = janet_unwrap_string(value);
                 int32_t len = janet_string_length(str);
                 if (has_null(str, len)) {
-                    return "cannot have embedded nulls in text values";
+                    *msg = "cannot have embedded nulls in text values";
+                    return SQLITE_MISMATCH;
                 } else {
                     res = sqlite3_bind_text(stmt, index, (const char *)str, len, SQLITE_STATIC);
                 }
@@ -151,18 +163,22 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
                 res = sqlite3_bind_blob(stmt, index, buffer->data, buffer->count, SQLITE_STATIC);
             }
             break;
- #ifdef JANET_INT_TYPES
+#ifdef JANET_INT_TYPES
         case JANET_ABSTRACT:
             switch (janet_is_int(value)) {
                 default:
-                    return "invalid sql value";
+                    *msg = "invalid sql value";
+                    return SQLITE_MISMATCH;
                 case JANET_INT_S64:
                     res = sqlite3_bind_int64(stmt, index, janet_unwrap_s64(value));
                     break;
                 case JANET_INT_U64:
                     {
                         uint64_t u = janet_unwrap_u64(value);
-                        if (u > INT64_MAX) return "integer too large for sqlite";
+                        if (u > INT64_MAX) {
+                            *msg = "integer too large for sqlite";
+                            return SQLITE_MISMATCH;
+                        }
                         res = sqlite3_bind_int64(stmt, index, (sqlite3_int64) u);
                     }
                     break;
@@ -172,13 +188,13 @@ static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
     }
     if (res != SQLITE_OK) {
         sqlite3 *db = sqlite3_db_handle(stmt);
-        return sqlite3_errmsg(db);
+        *msg = sqlite3_errmsg(db);
     }
-    return NULL;
+    return res;
 }
 
 /* Bind many parameters */
-static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
+static int bindmany(sqlite3_stmt *stmt, Janet params, const char **msg) {
     /* parameters */
     const Janet *seq;
     const JanetKV *kvs;
@@ -186,12 +202,13 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
     int limitindex = sqlite3_bind_parameter_count(stmt);
     if (janet_indexed_view(params, &seq, &len)) {
         if (len > limitindex) {
-            return "invalid index in sql parameters";
+            *msg = "invalid index in sql parameters";
+            return SQLITE_RANGE;
         }
         for (int i = 0; i < len; i++) {
-            const char *err = bind1(stmt, i + 1, seq[i]);
-            if (err) {
-                return err;
+            int res = bind1(stmt, i + 1, seq[i], msg);
+            if (res != SQLITE_OK) {
+                return res;
             }
         }
     } else if (janet_dictionary_view(params, &kvs, &len, &cap)) {
@@ -236,17 +253,19 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
                     break;
             }
             if (index <= 0 || index > limitindex) {
-                return "invalid index in sql parameters";
+                *msg = "invalid index in sql parameters";
+                return SQLITE_RANGE;
             }
-            const char *err = bind1(stmt, index, kvs[i].value);
-            if (err) {
-                return err;
+            int res = bind1(stmt, index, kvs[i].value, msg);
+            if (res != SQLITE_OK) {
+                return res;
             }
         }
     } else {
-        return "invalid type for sql parameters";
+        *msg = "invalid type for sql parameters";
+        return SQLITE_MISMATCH;    
     }
-    return NULL;
+    return SQLITE_OK;
 }
 
 /* Return error message unless stepping finished */
@@ -339,7 +358,6 @@ static const char *execute_collect_to_dataframe(sqlite3_stmt *stmt, JanetTable *
         }
     } while (status == SQLITE_ROW);
     janet_sfree(vecs);
-    
     return step_error(stmt, status);
 }
 
@@ -351,6 +369,7 @@ static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
     const uint8_t *err;
     sqlite3_stmt *stmt = NULL;
     Db *db = getopendb(argv, 0);
+    db->errcode = SQLITE_OK;
     const uint8_t *query = getquery(argv, 1);
     JanetArray *rows = (mode == COLLECT_ROWS)  ? janet_array(0) : NULL;
     JanetTable *cols = (mode == COLLECT_TO_DF) ? janet_table(0) : NULL;
@@ -362,12 +381,15 @@ static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
     while (*c) {
         /* Compile the next statement */
         if (sqlite3_prepare_v2(db->handle, c, (int)(end - c), &stmt, &c) != SQLITE_OK) {
-            janet_panic(sqlite3_errmsg(db->handle));
+            janet_panics(save_error(db));        
         }
         /* Trailing whitespace and comments compile to no statement */
         if (NULL == stmt) break;
-        const char *berr = has_params ? bindmany(stmt, argv[2]) : NULL;
-        if (berr) { err = janet_cstring(berr); goto error; }
+        const char *berr = NULL;
+        if (has_params) {
+            int res = bindmany(stmt, argv[2], &berr);
+            if (res != SQLITE_OK) { db->errcode = res; err = janet_cstring(berr); goto error; }
+        }
         /* Only returning last statement's result */
         if (mode == COLLECT_TO_DF) {
             cols = janet_table(0);
@@ -376,7 +398,7 @@ static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
             rows = janet_array(10);
             berr = execute_collect(stmt, rows);
         }
-        if (berr) { err = janet_cstring(berr); goto error; }
+        if (berr) { err = save_error(db); goto error; }
         sqlite3_finalize(stmt);
     }
     /* Good return path */
@@ -402,6 +424,7 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     const uint8_t *err;
     sqlite3_stmt *stmt = NULL, *stmt_extra = NULL;
     Db *db = getopendb(argv, 0);
+    db->errcode = SQLITE_OK;
     const uint8_t *query = getquery(argv, 1);
     const Janet *sets;
     int32_t nsets;
@@ -418,12 +441,12 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     const char *c = (const char *)query;
     const char *end = c + janet_string_length(query) + 1;
     if (sqlite3_prepare_v2(db->handle, c, (int)(end - c), &stmt, &c) != SQLITE_OK) {
-        janet_panic(sqlite3_errmsg(db->handle));
+        janet_panics(save_error(db));
     }
     if (NULL == stmt) janet_panic("expected a sql statement");
     /* Trailing whitespace and comments compile to no statement */
     if (sqlite3_prepare_v2(db->handle, c, (int)(end - c), &stmt_extra, &c) != SQLITE_OK) {
-        err = janet_cstring(sqlite3_errmsg(db->handle));
+        err = save_error(db);
         goto error;
     }
     if (NULL != stmt_extra) {
@@ -433,17 +456,17 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
 
     /* savepoint starts transaction when not in one and nests when inside one */
     if (sqlite3_exec(db->handle, "SAVEPOINT eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
-        err = janet_cstring(sqlite3_errmsg(db->handle));
+        err = save_error(db);
         goto error;
     }
 
     for (int32_t i = 0; i < nsets; i++) {
-        const char *berr = bindmany(stmt, sets[i]);
-        if (berr) { err = janet_cstring(berr); goto rollback; }
-        berr = execute(stmt);
-        if (berr) { err = janet_cstring(berr); goto rollback; }
+        const char *berr;
+        int res = bindmany(stmt, sets[i], &berr);
+        if (res != SQLITE_OK) { db->errcode = res; err = janet_cstring(berr); goto rollback;}
+        if (execute(stmt)) { err = save_error(db); goto rollback;}
         if (sqlite3_reset(stmt) != SQLITE_OK) {
-            err = janet_cstring(sqlite3_errmsg(db->handle));
+            err = save_error(db);
             goto rollback;
         }
         /* No check, on every non-NULL statement it returns SQLITE_OK https://github.com/sqlite/sqlite/blob/f544d3599a10b95aa3ee8f8c1fd182f6a2fc2798/src/vdbeapi.c#L157
@@ -452,7 +475,7 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     }
 
     if (sqlite3_exec(db->handle, "RELEASE eval_many;", NULL, NULL, NULL) != SQLITE_OK) {
-        err = janet_cstring(sqlite3_errmsg(db->handle));
+        err = save_error(db);
         goto rollback;
     }
     sqlite3_finalize(stmt);
@@ -482,21 +505,20 @@ static Janet sql_last_insert_rowid(int32_t argc, Janet *argv) {
 static Janet sql_error_code(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
     Db *db = getopendb(argv, 0);
-    int errcode = sqlite3_errcode(db->handle);
-    return janet_wrap_integer(errcode);
+    return janet_wrap_integer(db->errcode);
 }
 
 /* Toggle or report whether extension loading is allowed */
 static Janet sql_allow_loading_extensions(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
-    const char *err;
     Db *db = getopendb(argv, 0);
+    db->errcode = SQLITE_OK;
     int enable_loading = janet_optboolean(argv, argc, 1, -1);
     int setting;
     int status = sqlite3_db_config(db->handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, enable_loading, &setting);
     if (status != SQLITE_OK) {
-        err = sqlite3_errmsg(db->handle);
-        janet_panic(err);
+        db->errcode = status;
+        janet_panic(sqlite3_errstr(status));
     }
     return janet_wrap_boolean(setting);
 }
@@ -505,11 +527,13 @@ static Janet sql_allow_loading_extensions(int32_t argc, Janet *argv) {
 static Janet sql_load_extension(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
     Db *db = getopendb(argv, 0);
+    db->errcode = SQLITE_OK;
     const char *zFile = janet_getcstring(argv, 1);
     const char *zProc = janet_optcstring(argv, argc, 2, NULL);
     char *pzErrMsg = NULL;
     int status = sqlite3_load_extension(db->handle, zFile, zProc, &pzErrMsg);
     if (status != SQLITE_OK) {
+        db->errcode = status;
         const uint8_t *jErrMsg = janet_cstring(pzErrMsg ? pzErrMsg : sqlite3_errstr(status));
         sqlite3_free(pzErrMsg);
         janet_panics(jErrMsg);
@@ -579,8 +603,9 @@ static const JanetReg cfuns[] = {
         "\t(sqlite3/eval db `SELECT * FROM tab WHERE id = :id;` {:id 123})\n\n"
         "Will return an array of rows, where each row contains a table where columns names "
         "are keys for column values.\n\n"
-        "Ints are returned as Janet numbers, rounding above 2^53. To read them `select` with"
-        "`CAST(col AS TEXT)` and parse with `int/s64` to read them exactly."
+        "Ints are returned as Janet numbers, rounding above 2^53. To read them `select` with "
+        "`CAST(col AS TEXT)` and parse with `int/s64` to read them exactly. "
+        "A nil param's the same as none."
     },
     {"last-insert-rowid", sql_last_insert_rowid, 
         "(sqlite3/last-insert-rowid db)\n\n"
@@ -588,7 +613,9 @@ static const JanetReg cfuns[] = {
     },
     {"error-code", sql_error_code,
         "(sqlite3/error-code db)\n\n"
-        "Returns the error number of the last sqlite3 command that threw an error. Cross "
+        "Returns the error number of the last sqlite3 command that threw an error. "
+        "Errors binding params report SQLITE_RANGE (25) for no match "
+        "and SQLITE_MISMATCH (20) for values sqlite can't store. Cross "
         "check these numbers with the SQLite documentation for more information."
     },
     {"allow-loading-extensions", sql_allow_loading_extensions,

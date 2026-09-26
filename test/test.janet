@@ -61,3 +61,27 @@
     (assert (deep= @[{:a 1}] (sql/eval db `SELECT 1 AS a;` nil)) "nil params didn't mean no params")
     (defn select-one [&opt params] (sql/eval db `SELECT 1 AS a;` params))
     (assert (deep= @[{:a 1}] (select-one)) "forwarded &opt params didn't mean no params")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (sql/eval db `CREATE TABLE t (id INTEGER PRIMARY KEY);`)
+    (protect (sql/eval-many db `INSERT INTO t VALUES (?);` [[1] [1]]))
+    (assert (= 19 (sql/error-code db)) "rollback erased constraint failure's code")
+    (protect (sql/eval-many db `INSERT INTO t VALUES (?);` [[2] [2]] :keep-partial))
+    (assert (= 19 (sql/error-code db)) "release erased constraint failure's code")
+    (protect (sql/eval db `SELECT ?;` [1 2]))
+    (assert (= 25 (sql/error-code db)) "unmatched param didn't output SQLITE_RANGE")
+    (protect (sql/eval db `SELECT ?;` [@{}]))
+    (assert (= 20 (sql/error-code db)) "unstorable value didn't report SQLITE_MISMATCH")))
+
+(let [path "busy.db"]
+  (when (os/stat path) (os/rm path))
+  (let [holder (sql/open path)
+        writer (sql/open path)]
+    (defer (os/rm path)
+      (defer (do (sql/close holder) (sql/close writer))
+        (sql/eval holder `CREATE TABLE t(x);`)
+        (sql/eval holder `BEGIN IMMEDIATE;`)
+        (let [[ok err] (protect (sql/eval-many writer `INSERT INTO t VALUES (?);` [[1]]))]
+          (assert (and (not ok) (= err "database is locked")) "writing under another connection's lock didn't fail"))
+        (assert (= 5 (sql/error-code writer)) "eval-many's rollback masked/erased SQLITE_BUSY")))))
