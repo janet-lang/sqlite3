@@ -55,3 +55,9 @@
     (let [[ok err] (protect (sql/eval db `SELECT ?;` [(int/u64 "18446744073709551615")]))]
       (assert (and (not ok) (= err "integer too large for sqlite"))
               "int/u64 values beyond int64 should not be accepted (Sqlite wants us under INT64_MAX)"))))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (assert (deep= @[{:a 1}] (sql/eval db `SELECT 1 AS a;` nil)) "nil params didn't mean no params")
+    (defn select-one [&opt params] (sql/eval db `SELECT 1 AS a;` params))
+    (assert (deep= @[{:a 1}] (select-one)) "forwarded &opt params didn't mean no params")))

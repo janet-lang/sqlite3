@@ -102,6 +102,21 @@ static int has_null(const uint8_t *str, int32_t len) {
     return 0;
 }
 
+/* Get open connection from argv, panicking when closed */
+static Db *getopendb(const Janet *argv, int32_t n) {
+    Db *db = janet_getabstract(argv, n, &sql_conn_type);
+    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    return db;
+}
+
+/* Get sql from argv, panicking on embedded NULL */
+static const uint8_t *getquery(const Janet *argv, int32_t n) {
+    const uint8_t *query = janet_getstring(argv, n);
+    if (has_null(query, janet_string_length(query))) {
+        janet_panic("cannot have embedded NULL in sql statements");
+    }
+    return query;
+}
 /* Bind a single parameter */
 static const char *bind1(sqlite3_stmt *stmt, int index, Janet value) {
     int res;
@@ -234,19 +249,18 @@ static const char *bindmany(sqlite3_stmt *stmt, Janet params) {
     return NULL;
 }
 
+/* Return error message unless stepping finished */
+static const char *step_error(sqlite3_stmt *stmt, int status) {
+    return (status == SQLITE_DONE) ? NULL : sqlite3_errmsg(sqlite3_db_handle(stmt));
+}
+
 /* Execute a statement but don't collect results */
 static const char *execute(sqlite3_stmt *stmt) {
     int status;
-    const char *ret = NULL;
     do {
         status = sqlite3_step(stmt);
     } while (status == SQLITE_ROW);
-    /* Check for errors */
-    if (status != SQLITE_DONE) {
-        sqlite3 *db = sqlite3_db_handle(stmt);
-        ret = sqlite3_errmsg(db);
-    }
-    return ret;
+    return step_error(stmt, status);
 }
 
 /* Convert element/column of current row to Janet value */
@@ -282,7 +296,6 @@ static const char *execute_collect(sqlite3_stmt *stmt, JanetArray *rows) {
     /* Count number of columns in result */
     int ncol = sqlite3_column_count(stmt);
     int status;
-    const char *ret = NULL;
 
     /* Get column names */
     Janet *tupstart = janet_tuple_begin(ncol);
@@ -301,13 +314,7 @@ static const char *execute_collect(sqlite3_stmt *stmt, JanetArray *rows) {
             janet_array_push(rows, janet_wrap_struct(janet_struct_end(row)));
         }
     } while (status == SQLITE_ROW);
-
-    /* Check for errors */
-    if (status != SQLITE_DONE) {
-        sqlite3 *db = sqlite3_db_handle(stmt);
-        ret = sqlite3_errmsg(db);
-    }
-    return ret;
+    return step_error(stmt, status);
 }
 
 /* Return columns from executing statement */
@@ -315,7 +322,6 @@ static const char *execute_collect_to_dataframe(sqlite3_stmt *stmt, JanetTable *
     /* Count number of columns in result */
     int ncol = sqlite3_column_count(stmt);
     int status;
-    const char *ret = NULL;
 
     /* Key one array per column */
     JanetArray **vecs = janet_smalloc(sizeof(JanetArray *) * ncol);
@@ -334,12 +340,7 @@ static const char *execute_collect_to_dataframe(sqlite3_stmt *stmt, JanetTable *
     } while (status == SQLITE_ROW);
     janet_sfree(vecs);
     
-    /* Check for errors */
-    if (status != SQLITE_DONE) {
-        sqlite3 *db = sqlite3_db_handle(stmt);
-        ret = sqlite3_errmsg(db);
-    }
-    return ret;
+    return step_error(stmt, status);
 }
 
 typedef enum { COLLECT_ROWS, COLLECT_TO_DF } CollectMode;
@@ -349,25 +350,23 @@ static Janet sql_eval_impl(int32_t argc, Janet *argv, CollectMode mode) {
     janet_arity(argc, 2, 3);
     const uint8_t *err;
     sqlite3_stmt *stmt = NULL;
-    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
-    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
-    const uint8_t *query = janet_getstring(argv, 1);
-    if (has_null(query, janet_string_length(query))) {
-        janet_panic("cannot have embedded NULL in sql statements");
-    }
+    Db *db = getopendb(argv, 0);
+    const uint8_t *query = getquery(argv, 1);
     JanetArray *rows = (mode == COLLECT_ROWS)  ? janet_array(0) : NULL;
     JanetTable *cols = (mode == COLLECT_TO_DF) ? janet_table(0) : NULL;
     const char *c = (const char *)query;
+    const char *end = c + janet_string_length(query) + 1;
+    int has_params = argc == 3 && !janet_checktype(argv[2], JANET_NIL);
 
     /* Evaluate all statements in a loop */
     while (*c) {
         /* Compile the next statement */
-        if (sqlite3_prepare_v2(db->handle, c, -1, &stmt, &c) != SQLITE_OK) {
+        if (sqlite3_prepare_v2(db->handle, c, (int)(end - c), &stmt, &c) != SQLITE_OK) {
             janet_panic(sqlite3_errmsg(db->handle));
         }
         /* Trailing whitespace and comments compile to no statement */
         if (NULL == stmt) break;
-        const char *berr = (argc == 3) ? bindmany(stmt, argv[2]) : NULL;
+        const char *berr = has_params ? bindmany(stmt, argv[2]) : NULL;
         if (berr) { err = janet_cstring(berr); goto error; }
         /* Only returning last statement's result */
         if (mode == COLLECT_TO_DF) {
@@ -402,12 +401,8 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     janet_arity(argc, 3, 4);
     const uint8_t *err;
     sqlite3_stmt *stmt = NULL, *stmt_extra = NULL;
-    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
-    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
-    const uint8_t *query = janet_getstring(argv, 1);
-    if (has_null(query, janet_string_length(query))) {
-        janet_panic("cannot have embedded NULL in sql statements");
-    }
+    Db *db = getopendb(argv, 0);
+    const uint8_t *query = getquery(argv, 1);
     const Janet *sets;
     int32_t nsets;
     if (!janet_indexed_view(argv[2], &sets, &nsets)) {
@@ -421,12 +416,13 @@ static Janet sql_eval_many(int32_t argc, Janet *argv) {
     }
 
     const char *c = (const char *)query;
-    if (sqlite3_prepare_v2(db->handle, c, -1, &stmt, &c) != SQLITE_OK) {
+    const char *end = c + janet_string_length(query) + 1;
+    if (sqlite3_prepare_v2(db->handle, c, (int)(end - c), &stmt, &c) != SQLITE_OK) {
         janet_panic(sqlite3_errmsg(db->handle));
     }
     if (NULL == stmt) janet_panic("expected a sql statement");
     /* Trailing whitespace and comments compile to no statement */
-    if (sqlite3_prepare_v2(db->handle, c, -1, &stmt_extra, &c) != SQLITE_OK) {
+    if (sqlite3_prepare_v2(db->handle, c, (int)(end - c), &stmt_extra, &c) != SQLITE_OK) {
         err = janet_cstring(sqlite3_errmsg(db->handle));
         goto error;
     }
@@ -477,8 +473,7 @@ error:
 /* Gets the last inserted row id */
 static Janet sql_last_insert_rowid(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
-    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    Db *db = getopendb(argv, 0);
     sqlite3_int64 id = sqlite3_last_insert_rowid(db->handle);
     return janet_wrap_number((double) id);
 }
@@ -486,8 +481,7 @@ static Janet sql_last_insert_rowid(int32_t argc, Janet *argv) {
 /* Get the sqlite3 errcode */
 static Janet sql_error_code(int32_t argc, Janet *argv) {
     janet_fixarity(argc, 1);
-    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
-    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    Db *db = getopendb(argv, 0);
     int errcode = sqlite3_errcode(db->handle);
     return janet_wrap_integer(errcode);
 }
@@ -496,8 +490,7 @@ static Janet sql_error_code(int32_t argc, Janet *argv) {
 static Janet sql_allow_loading_extensions(int32_t argc, Janet *argv) {
     janet_arity(argc, 1, 2);
     const char *err;
-    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
-    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    Db *db = getopendb(argv, 0);
     int enable_loading = janet_optboolean(argv, argc, 1, -1);
     int setting;
     int status = sqlite3_db_config(db->handle, SQLITE_DBCONFIG_ENABLE_LOAD_EXTENSION, enable_loading, &setting);
@@ -511,8 +504,7 @@ static Janet sql_allow_loading_extensions(int32_t argc, Janet *argv) {
 /* Load extension */
 static Janet sql_load_extension(int32_t argc, Janet *argv) {
     janet_arity(argc, 2, 3);
-    Db *db = janet_getabstract(argv, 0, &sql_conn_type);
-    if (db->flags & FLAG_CLOSED) janet_panic(MSG_DB_CLOSED);
+    Db *db = getopendb(argv, 0);
     const char *zFile = janet_getcstring(argv, 1);
     const char *zProc = janet_optcstring(argv, argc, 2, NULL);
     char *pzErrMsg;
