@@ -62,12 +62,23 @@
     (defn select-one [&opt params] (sql/eval db `SELECT 1 AS a;` params))
     (assert (deep= @[{:a 1}] (select-one)) "forwarded &opt params didn't mean no params")))
 
+# (let [db (sql/open ":memory:")]
+#   (defer (sql/close db)
+#     (sql/eval db `CREATE TABLE t(s TEXT); INSERT INTO t VALUES ('42');`)
+#     (assert (= 1 (length (sql/eval db `SELECT s FROM t WHERE s = ?;` [42])))
+#             "42 bound as 42.0 and missed a \"42\" row")))
+#
+# This establishes a contract re: bind1's case JANET_NUMBER: 
+# I previously tried changing integral numbers'
+# representations so a Janet 42 wouldn't become a TEXT "42.0" so
+# `where s = ?` given 42 wouldn't make it "42.0" and then miss actual "42"
+# however this causes other correctness errors/breaking change
+# where (db/val "select ? / ?" 7 2) returned 3, instead of 3.5 (before and now).
+# I believe keeping "42.0" is better, because it's more predictable.
 (let [db (sql/open ":memory:")]
   (defer (sql/close db)
-    (each [x t] [[1 "integer"] [(math/pow 2 60) "integer"] [1.5 "real"] [1e300 "real"]]
-      (assert (deep= @[{:t t}] (sql/eval db `SELECT typeof(?) AS t;` [x]))
-              (string/format "%q didn't bind as %s" x t)))
-    (sql/eval db `CREATE TABLE t(s TEXT); `)
-    (sql/eval db `INSERT INTO t VALUES (?);` [42])
-    (assert (deep= @[{:s "42"}] (sql/eval db `SELECT s FROM t;`)) "TEXT col stored integral number with .0")
-    (assert (= 1 (length (sql/eval db `SELECT s FROM t WHERE s = ?;` [42]))) "integral number didn't match text")))
+    (assert (deep= @[{:v 3.5}] (sql/eval db `SELECT ? / ? AS v;` [7 2])) "integral numbers didn't bind as REAL")
+    (assert (deep= @[{:v 3}] (sql/eval db `SELECT ? / ? AS v;` [(int/s64 7) (int/s64 2)])) "int/s64 didn't bind as INTEGER")
+    (sql/eval db `CREATE TABLE t(s TEXT);`)
+    (sql/eval db `INSERT INTO t VALUES (?), (?);` [42 (int/s64 42)])
+    (assert (deep= @[{:s "42.0"} {:s "42"}] (sql/eval db `SELECT s FROM t;`)) "TEXT storage of numbers changed")))
