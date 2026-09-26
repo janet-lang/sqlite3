@@ -507,14 +507,14 @@ static Janet sql_load_extension(int32_t argc, Janet *argv) {
     Db *db = getopendb(argv, 0);
     const char *zFile = janet_getcstring(argv, 1);
     const char *zProc = janet_optcstring(argv, argc, 2, NULL);
-    char *pzErrMsg;
+    char *pzErrMsg = NULL;
     int status = sqlite3_load_extension(db->handle, zFile, zProc, &pzErrMsg);
     if (status != SQLITE_OK) {
-        const uint8_t *jErrMsg = janet_cstring(pzErrMsg);
+        const uint8_t *jErrMsg = janet_cstring(pzErrMsg ? pzErrMsg : sqlite3_errstr(status));
         sqlite3_free(pzErrMsg);
         janet_panics(jErrMsg);
     }
-    return janet_wrap_string(zFile);
+    return argv[1];
 }
 
 static JanetMethod conn_methods[] = {
