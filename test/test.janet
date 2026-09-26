@@ -61,3 +61,13 @@
     (assert (deep= @[{:a 1}] (sql/eval db `SELECT 1 AS a;` nil)) "nil params didn't mean no params")
     (defn select-one [&opt params] (sql/eval db `SELECT 1 AS a;` params))
     (assert (deep= @[{:a 1}] (select-one)) "forwarded &opt params didn't mean no params")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (each [x t] [[1 "integer"] [(math/pow 2 60) "integer"] [1.5 "real"] [1e300 "real"]]
+      (assert (deep= @[{:t t}] (sql/eval db `SELECT typeof(?) AS t;` [x]))
+              (string/format "%q didn't bind as %s" x t)))
+    (sql/eval db `CREATE TABLE t(s TEXT); `)
+    (sql/eval db `INSERT INTO t VALUES (?);` [42])
+    (assert (deep= @[{:s "42"}] (sql/eval db `SELECT s FROM t;`)) "TEXT col stored integral number with .0")
+    (assert (= 1 (length (sql/eval db `SELECT s FROM t WHERE s = ?;` [42]))) "integral number didn't match text")))
