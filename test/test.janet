@@ -24,4 +24,40 @@
   (defer (sql/close db)
     (sql/eval db `CREATE TABLE t (id INTEGER PRIMARY KEY);`)
     (protect (sql/eval-many db `INSERT INTO t VALUES (?);` [[1] [2] [1] [3]] :keep-partial)) # fails from repeated key, 3 not inserted
-    (assert (= 2 (length (sql/eval db `SELECT * FROM t;`))) ":keep-partial keeps the sets before the failing one")))
+    (assert (= 2 (length (sql/eval db `SELECT * FROM t;`))) ":keep-partial didn't keep sets before failing one")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (sql/eval db `CREATE TABLE t(x); INSERT INTO t VALUES (1);`)
+    (assert (deep= @[{:x 1}] (sql/eval db `SELECT x FROM t;`))
+            "Statements didn't see the schema changes of prior statements")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (let [[ok err] (protect (sql/eval db `SELECT ?;` [1 2]))]
+      (assert (and (not ok) (= err "invalid index in sql parameters"))
+              "Additional positional parameters didn't get rejected before binding"))))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (assert (deep= @[{:a 1 :b 2 :c 3}]
+                   (sql/eval db `SELECT :a AS a, @b AS b, $c AS c;` {:a 1 :b 2 :c 3}))
+            "keyword keys didn't bind parameters with any sqlite prefix")))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (assert (deep= @[{:same 1}]
+                   (sql/eval db `SELECT ? = 9007199254740993 AS same;` [(int/s64 "9007199254740993")]))
+            "int/s64 values don' convert to sqlite integers")
+    (assert (deep= @[{:same 1}]
+                   (sql/eval db `SELECT ? = 9007199254740993 AS same;` [(int/u64 "9007199254740993")]))
+            "int/u64 values within int64 don't convert to sqlite integers")
+    (let [[ok err] (protect (sql/eval db `SELECT ?;` [(int/u64 "18446744073709551615")]))]
+      (assert (and (not ok) (= err "integer too large for sqlite"))
+              "int/u64 values beyond int64 should not be accepted (Sqlite wants us under INT64_MAX)"))))
+
+(let [db (sql/open ":memory:")]
+  (defer (sql/close db)
+    (assert (deep= @[{:a 1}] (sql/eval db `SELECT 1 AS a;` nil)) "nil params didn't mean no params")
+    (defn select-one [&opt params] (sql/eval db `SELECT 1 AS a;` params))
+    (assert (deep= @[{:a 1}] (select-one)) "forwarded &opt params didn't mean no params")))

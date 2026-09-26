@@ -21,9 +21,9 @@
                                (map tuple (in once :title) (in once :bpm) (in once :gain_db)))
                 (def twice (sql/eval-to-dataframe db "SELECT * FROM mirror ORDER BY title;"))
 
-                (assert (deep= once twice)) # both are identical
+                (assert (deep= once twice) "They aren't identical")
                 (assert (deep= twice @{:title @["axiom" "briar" "cinder" "dune" "ember" "fjord"]
                                        :bpm @[122 98 140 87 133 104]
                                        :gain_db @[-6.5 -3.25 0.0 -12.75 2.5 -0.125]}))
-                (assert (deep= once tracks)) # the actual round trip, tracks defined in top let
+                (assert (deep= once tracks) "The round trip failed")
                 )))
