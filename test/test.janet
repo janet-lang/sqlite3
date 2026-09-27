@@ -1,4 +1,15 @@
-(import ../build/sqlite3 :as sql)
+(import ../bundle/deps/spork/spork/cc)
+(def built-sqlite3
+  (let [build-type (case (cc/build-type)
+           :release "release"
+           :debug "debug"
+           "develop")]
+  (string/format "../_build/%s/sqlite3" build-type)))
+
+(try
+  (import ../build/sqlite3 :as sql)
+  ([err]
+  (import* built-sqlite3 :as "sql")))
 
 (let [path   "test.db" 
       _      (when (os/stat path) (os/rm path))

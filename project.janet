@@ -1,11 +1,12 @@
-(declare-project
-  :name "sqlite3"
-  :description "Janet bindings to SQLite."
-  :author "Calvin Rose"
-  :license "MIT"
-  :url "https://github.com/janet-lang/sqlite3"
-  :repo "git+https://github.com/janet-lang/sqlite3.git")
+(def info (-> (slurp "./bundle/info.jdn") parse))
 
+(declare-project
+  :name (info :name)
+  :description (info :description)
+  :author (info :author)
+  :license (info :license)
+  :url (info :url)
+  :repo (info :repo))
 
 (def use-system-lib (= "1" (os/getenv "JANET_SYSTEM_SQLITE" 0)))
 
@@ -31,9 +32,8 @@
     :defines {"USE_SYSTEM_SQLITE" use-system-lib})
   (declare-native
     :name "sqlite3"
-    :source @["sqlite3.c" "main.c"])
-)
+    :source @["sqlite3.c" "main.c"]))
 
 (sh-phony "update-sqlite3" []
-    (print "updating sqlite3 local libs ...")
-    (os/shell "janet dl-sqlite3"))
+          (print "updating sqlite3 local libs ...")
+          (os/shell "janet dl-sqlite3"))
